@@ -130,4 +130,7 @@ func part1() {
 	runProgram(program, []int64{1})
 }
 
-func part2() {}
+func part2() {
+	program := readProgram("09")
+	runProgram(program, []int64{2})
+}
