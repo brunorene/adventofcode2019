@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -173,5 +174,196 @@ func part1() {
 	fmt.Println(sum)
 }
 
+func printASCII(output [][]rune) {
+	for _, line := range output {
+		for _, char := range line {
+			fmt.Printf("%c", char)
+		}
+		fmt.Println()
+	}
+}
+
+func transformIntoRunes(output []int64) (result [][]rune) {
+	for i := len(output) - 1; i >= 0; i-- {
+		if output[i] == 10 {
+			output[i] = 0
+			output = output[:i]
+		} else {
+			break
+		}
+	}
+	result = append(result, []rune{})
+	for _, char := range output {
+		switch char {
+		case 10:
+			result = append(result, []rune{})
+		default:
+			result[len(result)-1] = append(result[len(result)-1], rune(int(char)))
+		}
+	}
+	return
+}
+
+var directions = []rune{'n', 's', 'e', 'w'}
+
+func changeDirection(from rune, to rune) rune {
+	if (from == 'n' && to == 'e') ||
+		(from == 'e' && to == 's') ||
+		(from == 's' && to == 'w') ||
+		(from == 'w' && to == 'n') {
+		return 'R'
+	}
+	return 'L'
+}
+
+func getNextDirection(direction rune) (int, int) {
+	switch direction {
+	case 'n':
+		return 0, -1
+	case 's':
+		return 0, 1
+	case 'e':
+		return 1, 0
+	case 'w':
+		return -1, 0
+	}
+	return 0, 0
+}
+
+func oppositeDirection(direction rune) rune {
+	switch direction {
+	case 'n':
+		return 's'
+	case 's':
+		return 'n'
+	case 'e':
+		return 'w'
+	case 'w':
+		return 'e'
+	}
+	return direction
+}
+
+func nextStep(paths [][]rune, x, y int, direction rune) (rune, bool) {
+	alternatives := []rune{}
+	for _, nextDirection := range directions {
+		offsetX, offsetY := getNextDirection(nextDirection)
+		if y+offsetY < 0 || y+offsetY >= len(paths) || x+offsetX < 0 || x+offsetX >= len(paths[0]) {
+			continue
+		}
+		if paths[y+offsetY][x+offsetX] == '#' && nextDirection != oppositeDirection(direction) {
+			alternatives = append(alternatives, nextDirection)
+		}
+	}
+	if len(alternatives) == 1 {
+		return alternatives[0], false
+	}
+	if len(alternatives) == 0 {
+		return direction, true
+	}
+	return direction, false
+}
+
+func findStart(paths [][]rune) (int, int) {
+	for y, line := range paths {
+		for x, cell := range line {
+			if cell == '^' {
+				return x, y
+			}
+		}
+	}
+	return -1, -1
+}
+
+func findCommands(paths [][]rune, x, y int) string {
+	steps := 1
+	commands := ""
+	currentDirection := 'n'
+	for {
+		nextDirection, theEnd := nextStep(paths, x, y, currentDirection)
+		if theEnd {
+			commands = fmt.Sprint(commands, ",", steps)
+			break
+		}
+		if nextDirection != currentDirection {
+			turn := changeDirection(currentDirection, nextDirection)
+			if steps > 1 {
+				commands = fmt.Sprint(commands, ",", steps)
+			}
+			commands = fmt.Sprint(commands, ",", string(turn))
+			steps = 1
+		} else {
+			steps++
+		}
+		currentDirection = nextDirection
+		offsetX, offsetY := getNextDirection(currentDirection)
+		x += offsetX
+		y += offsetY
+	}
+	return commands[1:]
+}
+
+func generateSubcommands(commands string, start int) []string {
+	parts := strings.Split(commands, ",")
+	result := []string{}
+	for i := len(parts); i >= 2; i -= 2 {
+		item := parts[:i]
+		result = append(result, strings.Join(item, ","))
+	}
+	return result
+}
+
+var regexStart = regexp.MustCompile(`^,`)
+var regexEnd = regexp.MustCompile(`,$`)
+
+func subCommands(commands string, subList []string) ([]string, string) {
+	if commands == "" {
+		return subList, commands
+	}
+	parts := generateSubcommands(commands, 0)
+	for _, part := range parts {
+		processed := strings.ReplaceAll(commands, part, "")
+		processed = strings.ReplaceAll(processed, ",,", ",")
+		processed = regexStart.ReplaceAllString(processed, "")
+		processed = regexEnd.ReplaceAllString(processed, "")
+		result, rest := subCommands(processed, append(subList, part))
+		if len(result) == 3 &&
+			rest == "" &&
+			len(result[0]) <= 20 &&
+			len(result[1]) <= 20 &&
+			len(result[2]) <= 20 {
+			return result, rest
+		}
+	}
+	return []string{}, commands
+}
+
 func part2() {
+	program := readProgram("17")
+	_, output := runProgram(program, []int64{})
+	paths := transformIntoRunes(output)
+	printASCII(paths)
+	x, y := findStart(paths)
+	commands := findCommands(paths, x, y)
+	fmt.Println(commands)
+	subCommands, _ := subCommands(commands, []string{})
+	subCalls := strings.ReplaceAll(commands, subCommands[0], "A")
+	subCalls = strings.ReplaceAll(subCalls, subCommands[1], "B")
+	subCalls = strings.ReplaceAll(subCalls, subCommands[2], "C")
+	input := []int64{}
+	for _, item := range subCalls {
+		input = append(input, int64(item))
+	}
+	input = append(input, 10)
+	for _, subC := range subCommands {
+		for _, item := range subC {
+			input = append(input, int64(item))
+		}
+		input = append(input, 10)
+	}
+	input = append(input, int64('n'), 10)
+	fmt.Println(input)
+	program = readProgram("17/2")
+	_, output = runProgram(program, input)
+	fmt.Println(output)
 }
