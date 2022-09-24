@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"math"
 	"os"
+	"sort"
 )
 
 func main() {
@@ -18,7 +20,7 @@ func main() {
 	maze := [][]byte{}
 	scanner := bufio.NewScanner(file)
 	y := 0
-	reference := make(map[byte]node)
+	reference := make(map[int]node)
 	for scanner.Scan() {
 		line := scanner.Text()
 		maze = append(maze, []byte{})
@@ -26,7 +28,7 @@ func main() {
 		for _, cell := range line {
 			maze[len(maze)-1] = append(maze[len(maze)-1], byte(cell))
 			if cell == '@' || (cell >= 'a' && cell <= 'z') {
-				reference[byte(cell)] = node{string(cell), coords{x, y}}
+				reference[int(cell)-'a'] = node{int(cell) - 'a', coords{x, y, 0}}
 			}
 			x++
 		}
@@ -42,105 +44,75 @@ func main() {
 }
 
 type coords struct {
-	x, y int
+	x, y, keys int
+}
+
+func (c *coords) hasKey(key int) bool {
+	return (c.keys & int(math.Pow(2, float64(key)))) > 0
+}
+
+func (c *coords) addKey(key int) {
+	c.keys = c.keys | int(math.Pow(2, float64(key)))
+}
+
+func (c *coords) removeKey(key int) {
+	c.keys = c.keys &^ int(math.Pow(2, float64(key)))
 }
 
 type node struct {
-	name   string
+	name   int
 	coords coords
 }
-
-type edge struct {
-	start, end node
-}
 type path struct {
-	edge   edge
-	length int
+	start, end node
+	length     int
 }
 
-func nextNodes(maze [][]byte, start node, history map[coords]bool, keys map[byte]bool) []node {
+func nextNodes(maze [][]byte, start node, history map[coords]bool) []node {
 	result := []node{}
-	for _, offsetCoords := range []coords{{0, 1}, {0, -1}, {1, 0}, {-1, 0}} {
-		coords := coords{start.coords.x + offsetCoords.x, start.coords.y + offsetCoords.y}
-		hasKeyForDoor := maze[coords.y][coords.x] < 65 ||
-			maze[coords.y][coords.x] > 90 ||
-			keys[maze[coords.y][coords.x]+('a'-'A')]
-		if hasKeyForDoor && maze[coords.y][coords.x] != '#' && !history[coords] {
-			result = append(result, node{string(maze[coords.y][coords.x]), coords})
+	for _, offsetCoords := range []coords{{0, 1, 0}, {0, -1, 0}, {1, 0, 0}, {-1, 0, 0}} {
+		coords := coords{start.coords.x + offsetCoords.x, start.coords.y + offsetCoords.y, start.coords.keys}
+		opensDoor := maze[coords.y][coords.x] < 'A' || maze[coords.y][coords.x] > 'Z' || start.coords.hasKey(int(maze[coords.y][coords.x])-'A')
+		if opensDoor && maze[coords.y][coords.x] != '#' && !history[coords] {
+			result = append(result, node{int(maze[coords.y][coords.x]) - 'a', coords})
 		}
 	}
 	return result
 }
 
-func copyMapCoords(m map[coords]bool) map[coords]bool {
-	copy := make(map[coords]bool)
-	for k, v := range m {
-		copy[k] = v
+func generateGraph(maze [][]byte, start node, history map[coords]bool, level string) []path {
+	if start.name >= 0 && start.name <= 25 && !start.coords.hasKey(start.name) {
+		return []path{{start, start, 0}}
 	}
-	return copy
-}
-
-func copyMapByte(m map[byte]bool) map[byte]bool {
-	copy := make(map[byte]bool)
-	for k, v := range m {
-		copy[k] = v
-	}
-	return copy
-}
-
-func generateGraph(maze [][]byte, start node, history map[coords]bool, keys map[byte]bool, level string) []path {
-	if start.name[0] >= 'a' && start.name[0] <= 'z' && !keys[start.name[0]] {
-		return []path{{edge{start, start}, 0}}
-	}
-	nextNodes := nextNodes(maze, start, history, keys)
+	nextNodes := nextNodes(maze, start, history)
 	if len(nextNodes) == 0 {
 		return []path{}
 	}
 	result := []path{}
 	for _, node := range nextNodes {
-		newHistory := copyMapCoords(history)
-		newHistory[node.coords] = true
-		paths := generateGraph(maze, node, newHistory, keys, level+" ")
+		history[node.coords] = true
+		paths := generateGraph(maze, node, history, level+" ")
 		for _, p := range paths {
-			if start.name != p.edge.end.name {
-				result = append(result, path{edge{start, p.edge.end}, p.length + 1})
+			p.end.coords.addKey(p.end.name)
+			if start.name != p.end.name {
+				result = append(result, path{start, p.end, p.length + 1})
 			}
 		}
 	}
 	return result
 }
 
-type queueItem struct {
-	node node
-	keys map[byte]bool
-}
+const infinity = int(^uint(0) >> 1)
 
-func minPaths(paths []path) []path {
-	mem := make(map[edge]int)
-	for _, p := range paths {
-		length, exists := mem[p.edge]
-		if !exists {
-			mem[p.edge] = p.length
-		} else if length > p.length {
-			mem[p.edge] = p.length
-		}
-	}
-	result := []path{}
-	for edge, length := range mem {
-		result = append(result, path{edge, length})
-	}
-	return result
-}
-
-func lowerCostNode(table map[string]int, visited map[string]bool) (string, int) {
-	nonVisited := make(map[string]int)
-	for name, cost := range table {
-		if !visited[name] {
-			nonVisited[name] = cost
+func lowerCostNode(table map[node]int, visited map[node]bool) (node, int) {
+	nonVisited := make(map[node]int)
+	for n, cost := range table {
+		if !visited[n] {
+			nonVisited[n] = cost
 		}
 	}
 
-	minName := "-"
+	minName := node{}
 	minCost := infinity
 	for name, cost := range nonVisited {
 		if cost < minCost {
@@ -151,55 +123,73 @@ func lowerCostNode(table map[string]int, visited map[string]bool) (string, int) 
 	return minName, minCost
 }
 
-const infinity = int(^uint(0) >> 1)
+type costNode struct {
+	node   node
+	length int
+}
 
-func part1(maze [][]byte, reference map[byte]node) {
-	queue := []queueItem{{reference['@'], make(map[byte]bool)}}
+func part1(maze [][]byte, reference map[int]node) {
+	queue := []node{reference['@'-'a']}
 	foundPaths := make(map[path]bool)
-	neighbours := make(map[byte][]path)
+	neighbours := make(map[node][]path)
 	for len(queue) > 0 {
 		next := queue[0]
 		queue = queue[1:]
-		paths := minPaths(generateGraph(maze, next.node, map[coords]bool{next.node.coords: true}, next.keys, ""))
+		paths := generateGraph(maze, next, map[coords]bool{next.coords: true}, "")
 		for _, p := range paths {
 			if !foundPaths[p] {
 				foundPaths[p] = true
-				_, exists := neighbours[p.edge.start.name[0]]
+				_, exists := neighbours[p.start]
 				if !exists {
-					neighbours[p.edge.start.name[0]] = []path{}
+					neighbours[p.start] = []path{}
 				}
-				neighbours[p.edge.start.name[0]] = append(neighbours[p.edge.start.name[0]], p)
-				keys := copyMapByte(next.keys)
-				keys[p.edge.end.name[0]] = true
-				queue = append(queue, queueItem{p.edge.end, keys})
+				neighbours[p.start] = append(neighbours[p.start], p)
+				p.end.coords.addKey(p.end.name)
+				queue = append(queue, p.end)
 			}
 		}
 	}
+	// for p := range foundPaths {
+	// 	fmt.Println(p)
+	// }
 
 	// Dijkstra
-	costTable := make(map[string]int)
-	for name := range reference {
-		costTable[string(name)] = infinity
+	costTable := make(map[node]int)
+	for p := range foundPaths {
+		costTable[p.start] = infinity
+		costTable[p.end] = infinity
 	}
-	costTable["@"] = 0
+	costTable[reference['@'-'a']] = 0
 
-	visited := make(map[string]bool)
+	visited := make(map[node]bool)
 
-	for len(visited) != len(reference) {
+	for len(visited) != len(costTable) {
 		next, _ := lowerCostNode(costTable, visited)
 
 		visited[next] = true
 
-		for _, path := range neighbours[next[0]] {
+		for _, path := range neighbours[next] {
 			distanceNeighbour := path.length + costTable[next]
-			if distanceNeighbour < costTable[path.edge.end.name] {
-				costTable[path.edge.end.name] = distanceNeighbour
+			if distanceNeighbour < costTable[path.end] {
+				costTable[path.end] = distanceNeighbour
 			}
 		}
 	}
 
-	fmt.Println(costTable)
-
+	fmt.Println("---//---")
+	results := []costNode{}
+	for k, v := range costTable {
+		results = append(results, costNode{k, v})
+	}
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].node.coords.keys == results[j].node.coords.keys {
+			return results[i].length > results[j].length
+		}
+		return results[i].node.coords.keys < results[j].node.coords.keys
+	})
+	for _, res := range results {
+		fmt.Println(res)
+	}
 }
 
 func part2() {
